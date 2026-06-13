@@ -21,6 +21,9 @@ Usage:
 import os
 import sys
 from datetime import date
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import argparse
+import json
 
 if hasattr(sys.stdin, "reconfigure"):
     sys.stdin.reconfigure(encoding="utf-8")
@@ -114,6 +117,30 @@ def ask_farm_agent(messages: list) -> None:
     messages.append({"role": "assistant", "content": response.content})
 
 
+def content_to_text(content) -> str:
+    if isinstance(content, str):
+        return content
+
+    parts = []
+    for block in content:
+        if getattr(block, "type", None) == "text":
+            parts.append(block.text)
+    return "\n".join(parts).strip()
+
+
+def plan_farm_workflow(query: str, history: list | None = None) -> str:
+    messages = []
+    for item in history or []:
+        role = item.get("role")
+        text = item.get("text") or item.get("content")
+        if role in ("user", "assistant") and text:
+            messages.append({"role": role, "content": text})
+
+    messages.append({"role": "user", "content": query})
+    ask_farm_agent(messages)
+    return content_to_text(messages[-1]["content"])
+
+
 def print_last_assistant_message(messages: list) -> None:
     content = messages[-1]["content"]
     if isinstance(content, str):
@@ -125,7 +152,53 @@ def print_last_assistant_message(messages: list) -> None:
             print(block.text)
 
 
-if __name__ == "__main__":
+class FarmAgentHandler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self.send_json({})
+
+    def do_GET(self):
+        if self.path == "/api/health":
+            self.send_json({"ok": True, "service": "farmAgent"})
+            return
+        self.send_json({"error": "Not found"}, status=404)
+
+    def do_POST(self):
+        if self.path != "/api/chat":
+            self.send_json({"error": "Not found"}, status=404)
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw_body = self.rfile.read(length).decode("utf-8")
+            payload = json.loads(raw_body or "{}")
+            message = str(payload.get("message", "")).strip()
+            history = payload.get("history", [])
+
+            if not message:
+                self.send_json({"error": "message is required"}, status=400)
+                return
+
+            reply = plan_farm_workflow(message, history)
+            self.send_json({"reply": reply})
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, status=500)
+
+    def send_json(self, payload: dict, status: int = 200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        print(f"[farmAgent] {self.address_string()} - {format % args}")
+
+
+def run_console():
     print("s0: Farm Workflow Agent")
     print("输入农场管理需求，回车生成待执行操作步骤。输入 q 退出。\n")
 
@@ -143,3 +216,28 @@ if __name__ == "__main__":
         ask_farm_agent(history)
         print_last_assistant_message(history)
         print()
+
+
+def run_server(host: str, port: int):
+    server = ThreadingHTTPServer((host, port), FarmAgentHandler)
+    print(f"farmAgent API listening on http://{host}:{port}")
+    print("POST /api/chat with JSON: {\"message\":\"给A区番茄安排明天上午浇水\"}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Farm workflow planning agent")
+    parser.add_argument("--serve", action="store_true", help="start HTTP API server")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP server host")
+    parser.add_argument("--port", type=int, default=8008, help="HTTP server port")
+    args = parser.parse_args()
+
+    if args.serve:
+        run_server(args.host, args.port)
+    else:
+        run_console()

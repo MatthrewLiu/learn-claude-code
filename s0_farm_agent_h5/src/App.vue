@@ -58,6 +58,7 @@ function sendText() {
   const text = textValue.value.trim()
   if (!text) return
 
+  const history = getRequestHistory()
   messages.value.push({
     id: Date.now(),
     role: 'user',
@@ -65,10 +66,19 @@ function sendText() {
   })
   textValue.value = ''
   scrollToBottom()
-  replyWithPlan(text)
+  requestAgentReply(text, history)
 }
 
-function replyWithPlan(text) {
+function getRequestHistory() {
+  return messages.value
+    .filter((item) => !item.thinking)
+    .map((item) => ({
+      role: item.role === 'agent' ? 'assistant' : 'user',
+      text: item.text
+    }))
+}
+
+async function requestAgentReply(text, history = getRequestHistory()) {
   const currentVersion = conversationVersion.value
   const thinkingId = Date.now() + 1
   messages.value.push({
@@ -79,7 +89,23 @@ function replyWithPlan(text) {
   })
   scrollToBottom()
 
-  window.setTimeout(() => {
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: text,
+        history
+      })
+    })
+
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.error || '请求失败')
+    }
+
     if (currentVersion !== conversationVersion.value) return
 
     const index = messages.value.findIndex((item) => item.id === thinkingId)
@@ -87,17 +113,23 @@ function replyWithPlan(text) {
       messages.value[index] = {
         id: thinkingId,
         role: 'agent',
-        text:
-          `已解析需求：${text}\n\n` +
-          '待执行操作步骤：\n' +
-          '1. 查询相关地块、作物批次和负责人信息。\n' +
-          '2. 校验时间、人员排程和任务冲突。\n' +
-          '3. 生成待创建农事任务预览。\n\n' +
-          '需要确认：具体时间、用量/时长、是否立即提交。'
+        text: data.reply || 'Agent 没有返回内容。'
       }
     }
     scrollToBottom()
-  }, 900)
+  } catch (error) {
+    if (currentVersion !== conversationVersion.value) return
+
+    const index = messages.value.findIndex((item) => item.id === thinkingId)
+    if (index >= 0) {
+      messages.value[index] = {
+        id: thinkingId,
+        role: 'agent',
+        text: `请求失败：${error.message}`
+      }
+    }
+    scrollToBottom()
+  }
 }
 
 function startVoice() {
@@ -110,13 +142,14 @@ function endVoice() {
   isRecording.value = false
 
   const voiceText = '语音输入：给B区草莓生成今天的巡检任务'
+  const history = getRequestHistory()
   messages.value.push({
     id: Date.now(),
     role: 'user',
     text: voiceText
   })
   scrollToBottom()
-  replyWithPlan('给B区草莓生成今天的巡检任务')
+  requestAgentReply('给B区草莓生成今天的巡检任务', history)
 }
 </script>
 
