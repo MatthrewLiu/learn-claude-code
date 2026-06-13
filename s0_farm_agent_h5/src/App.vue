@@ -2,49 +2,27 @@
 import { computed, nextTick, ref } from 'vue'
 import {
   Bot,
-  ChevronRight,
-  Clipboard,
-  Keyboard,
-  Menu,
   MessageCirclePlus,
   Mic,
   Send,
   Sparkles,
-  Sprout,
-  Star,
-  ThumbsDown,
-  ThumbsUp,
   UserRound,
-  VolumeX,
-  X
 } from 'lucide-vue-next'
 
 const inputMode = ref('voice')
 const textValue = ref('')
 const isRecording = ref(false)
 const messagesEl = ref(null)
+const conversationVersion = ref(0)
 
 const messages = ref([
   {
     id: 1,
-    role: 'agent',
-    type: 'app',
-    title: '相关应用 · 3',
-    items: [
-      {
-        name: '巡检任务',
-        desc: '按地块、作物、人员快速生成巡检待办。',
-        icon: Sprout
-      }
-    ]
-  },
-  {
-    id: 2,
     role: 'user',
     text: '给A区番茄安排明天上午浇水，负责人李四'
   },
   {
-    id: 3,
+    id: 2,
     role: 'agent',
     text:
       '已识别为“创建农事任务”。\n\n待执行操作步骤：\n1. 查询 A 区当前番茄种植批次。\n2. 检查李四明天上午的任务排程。\n3. 待创建浇水任务，时间为明天上午，负责人李四。\n\n需要确认：具体时间段、浇水量或时长。'
@@ -68,6 +46,14 @@ function toggleInputMode() {
   isRecording.value = false
 }
 
+function startNewConversation() {
+  conversationVersion.value += 1
+  messages.value = []
+  textValue.value = ''
+  isRecording.value = false
+  scrollToBottom()
+}
+
 function sendText() {
   const text = textValue.value.trim()
   if (!text) return
@@ -83,6 +69,7 @@ function sendText() {
 }
 
 function replyWithPlan(text) {
+  const currentVersion = conversationVersion.value
   const thinkingId = Date.now() + 1
   messages.value.push({
     id: thinkingId,
@@ -93,6 +80,8 @@ function replyWithPlan(text) {
   scrollToBottom()
 
   window.setTimeout(() => {
+    if (currentVersion !== conversationVersion.value) return
+
     const index = messages.value.findIndex((item) => item.id === thinkingId)
     if (index >= 0) {
       messages.value[index] = {
@@ -134,90 +123,38 @@ function endVoice() {
 <template>
   <main class="phone-shell">
     <section class="app-screen">
-      <header class="status-bar" aria-label="状态栏">
-        <span>9:41</span>
-        <div class="signal-group">
-          <span class="signal-bars"><i></i><i></i><i></i></span>
-          <span class="wifi-dot"></span>
-          <span class="battery"><i></i></span>
-        </div>
-      </header>
-
-      <nav class="top-nav">
-        <button class="icon-button ghost" aria-label="关闭">
-          <X :size="18" />
-        </button>
-        <h1>农场智管</h1>
-        <span class="nav-spacer"></span>
-      </nav>
-
       <div class="quick-actions" aria-label="快捷操作">
-        <button class="round-button" aria-label="菜单">
-          <Menu :size="27" />
-        </button>
-        <button class="round-button" aria-label="新会话">
+        <button class="round-button" aria-label="新会话" @click="startNewConversation">
           <MessageCirclePlus :size="25" />
-        </button>
-        <button class="round-button right" aria-label="静音">
-          <VolumeX :size="25" />
         </button>
       </div>
 
       <div ref="messagesEl" class="chat-list">
+        <section v-if="messages.length === 0" class="empty-state">
+          <div class="empty-icon">
+            <Bot :size="28" />
+          </div>
+          <h1>农场智管</h1>
+          <p>今天想处理哪块地？</p>
+        </section>
+
         <article
           v-for="message in messages"
           :key="message.id"
           :class="['message-row', message.role]"
         >
-          <template v-if="message.type === 'app'">
-            <section class="app-card">
-              <div class="app-card-title">
-                <Star :size="18" fill="currentColor" />
-                <span>{{ message.title }}</span>
-                <ChevronRight :size="16" class="up" />
-              </div>
-              <button
-                v-for="item in message.items"
-                :key="item.name"
-                class="app-entry"
-              >
-                <span class="entry-icon">
-                  <component :is="item.icon" :size="30" />
-                </span>
-                <span>
-                  <strong>{{ item.name }}</strong>
-                  <small>{{ item.desc }}</small>
-                </span>
-                <ChevronRight :size="24" />
-              </button>
-              <div class="card-tools">
-                <button aria-label="复制">
-                  <Clipboard :size="21" />
-                </button>
-                <button aria-label="点赞">
-                  <ThumbsUp :size="22" />
-                </button>
-                <button aria-label="点踩">
-                  <ThumbsDown :size="22" />
-                </button>
-              </div>
-            </section>
-          </template>
-
-          <template v-else>
-            <div v-if="message.role === 'agent'" class="avatar">
-              <Bot :size="19" />
-            </div>
-            <div :class="['bubble', { thinking: message.thinking }]">
-              <span>{{ message.text }}</span>
-              <span v-if="message.thinking" class="typing-dots">
-                <i></i><i></i><i></i>
-              </span>
-            </div>
-            <div v-if="message.role === 'user'" class="avatar user-avatar">
-              <UserRound :size="18" />
-            </div>
-          </template>
+          <div v-if="message.role === 'agent'" class="avatar">
+            <Bot :size="19" />
+          </div>
+          <div :class="['bubble', { thinking: message.thinking }]">
+            <span>{{ message.text }}</span>
+            <span v-if="message.thinking" class="typing-dots">
+              <i></i><i></i><i></i>
+            </span>
+          </div>
+          <div v-if="message.role === 'user'" class="avatar user-avatar">
+            <UserRound :size="18" />
+          </div>
         </article>
       </div>
 
@@ -254,15 +191,6 @@ function endVoice() {
               <Send :size="20" />
             </button>
           </form>
-
-          <button
-            class="keyboard-button"
-            :aria-label="inputMode === 'voice' ? '键盘输入' : '语音输入'"
-            @click="toggleInputMode"
-          >
-            <Keyboard v-if="inputMode === 'voice'" :size="24" />
-            <Mic v-else :size="23" />
-          </button>
         </div>
         <div class="home-indicator"></div>
       </footer>
