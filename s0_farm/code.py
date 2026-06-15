@@ -24,6 +24,7 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import argparse
 import json
+from urllib import error, request
 
 if hasattr(sys.stdin, "reconfigure"):
     sys.stdin.reconfigure(encoding="utf-8")
@@ -55,6 +56,35 @@ if not MODEL:
 
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 TODAY = date.today().isoformat()
+JOBS_API_URL = "https://testing.nupointonline.com/v2/jobs"
+JOBS_API_TOKEN = "2efe027159140ae32ece313cd194106f"
+JOBS_API_BODY = {
+    "external_id": "",
+    "name": None,
+    "blocks": [
+        {
+            "id": "fa9d04b8-7688-45e4-a712-bb3aa0fc3116",
+            "block_name": "Unlabeled_6",
+        }
+    ],
+    "crop_type_id": 25,
+    "map_id": 10934,
+    "job_type_id": 1981,
+    "products": [
+        {
+            "id": 10183,
+            "coverage": 0,
+            "rate": 0,
+        }
+    ],
+    "requested_date": "2026-06-15T07:10:44.791Z",
+    "spray_type_id": 0,
+    "tractor_speed": 0,
+    "implement_id": None,
+    "implement_width": 0,
+    "water_rate_value": 0,
+    "water_rate_unit": "acre",
+}
 
 SYSTEM = f"""
 你叫 farmAgent，是一个农场管理系统的工作流助手。
@@ -141,6 +171,88 @@ def plan_farm_workflow(query: str, history: list | None = None) -> str:
     return content_to_text(messages[-1]["content"])
 
 
+def create_job() -> dict:
+    body = json.dumps(JOBS_API_BODY, ensure_ascii=False).encode("utf-8")
+    http_request = request.Request(
+        JOBS_API_URL,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": JOBS_API_TOKEN,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with request.urlopen(http_request, timeout=30) as response:
+            raw_text = response.read().decode("utf-8", errors="replace")
+            return {
+                "ok": 200 <= response.status < 300,
+                "status": response.status,
+                "data": parse_json_or_text(raw_text),
+            }
+    except error.HTTPError as exc:
+        raw_text = exc.read().decode("utf-8", errors="replace")
+        return {
+            "ok": False,
+            "status": exc.code,
+            "data": parse_json_or_text(raw_text),
+        }
+    except error.URLError as exc:
+        return {
+            "ok": False,
+            "status": None,
+            "data": f"Request failed: {exc.reason}",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": None,
+            "data": f"Request failed: {exc}",
+        }
+
+
+def parse_json_or_text(raw_text: str):
+    if not raw_text:
+        return None
+
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        return raw_text
+
+
+def format_job_summary(job_response: dict) -> str:
+    data = job_response.get("data")
+    if isinstance(data, dict):
+        job_id = data.get("id")
+        job_name = data.get("name")
+        return f"- id：{job_id}\n- name：{job_name}"
+
+    status = job_response.get("status")
+    return f"- 创建失败\n- status：{status}\n- error：{data}"
+
+
+def build_user_reply(agent_reply: str, job_response: dict) -> str:
+    return (
+        "## jobs 接口返回值\n"
+        f"{format_job_summary(job_response)}\n\n"
+        "## Agent 原本回答\n"
+        f"{agent_reply}"
+    )
+
+
+def handle_user_request(query: str, history: list | None = None) -> dict:
+    agent_reply = plan_farm_workflow(query, history)
+    job_response = create_job()
+    return {
+        "reply": build_user_reply(agent_reply, job_response),
+        "agent_reply": agent_reply,
+        "job_response": job_response,
+    }
+
+
 def print_last_assistant_message(messages: list) -> None:
     content = messages[-1]["content"]
     if isinstance(content, str):
@@ -178,8 +290,8 @@ class FarmAgentHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "message is required"}, status=400)
                 return
 
-            reply = plan_farm_workflow(message, history)
-            self.send_json({"reply": reply})
+            result = handle_user_request(message, history)
+            self.send_json(result)
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=500)
 
@@ -212,9 +324,10 @@ def run_console():
         if query.strip().lower() in ("q", "exit", ""):
             break
 
+        result = handle_user_request(query, history)
         history.append({"role": "user", "content": query})
-        ask_farm_agent(history)
-        print_last_assistant_message(history)
+        history.append({"role": "assistant", "content": result["agent_reply"]})
+        print(result["reply"])
         print()
 
 

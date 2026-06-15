@@ -11,7 +11,11 @@ cp .env.example .env
 **运行**：
 
 ```sh
+普通控制台模式
 python s0_farm/code.py
+
+启动后端服务模式
+python .\s0_farm\code.py --serve --host 127.0.0.1 --port 8008
 ```
 
 试试这些 prompt：
