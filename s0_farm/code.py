@@ -63,12 +63,12 @@ JOBS_API_BODY = {
     "name": None,
     "blocks": [
         {
-            "id": "fa9d04b8-7688-45e4-a712-bb3aa0fc3116",
-            "block_name": "Unlabeled_6",
+            "id": "a6376908-86a8-428c-a8b8-7eb2dafa7efb",
+            "block_name": "[S1]01"
         }
     ],
     "crop_type_id": 25,
-    "map_id": 10934,
+    "map_id": 10916,
     "job_type_id": 1981,
     "products": [
         {
